@@ -1,5 +1,5 @@
 ---
-title: "Paizaのインフラ刷新の裏側その２"
+title: "paizaのインフラ刷新の裏側その２"
 emoji: "👏"
 type: "tech" # tech: 技術記事 / idea: アイデア
 topics: ["aws","cloud"]
