@@ -3,7 +3,7 @@ title: "paizaのインフラ刷新の裏側その１"
 emoji: "👏"
 type: "tech" # tech: 技術記事 / idea: アイデア
 topics: ["aws","cloud"]
-published: false
+published: true
 ---
 
 ## 概要
