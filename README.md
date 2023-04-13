@@ -32,7 +32,6 @@ brew install pnpm
 ### blog用記事の作成準備
 
 ```bash
-# 執筆者がわかるようなディレクトリを作成してください
 # 一度だけ実施すればOKです。
 pnpm init
 pnpm install zenn-cli
