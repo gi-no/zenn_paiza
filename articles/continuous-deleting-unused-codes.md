@@ -2,7 +2,7 @@
 title: "不要コードを継続的に削除し、技術的負債に対抗する"
 emoji: "🧹"
 type: "tech"
-topics: ["rails", "ruby", "coverage", "technicaldebt"]
+topics: ["rails", "ruby", "coverage", "technicaldebt", "ci"]
 published: false
 ---
 
