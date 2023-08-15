@@ -3,7 +3,9 @@ title: "VueからReactへの移行の理由づけと技術選定の考え方"
 emoji: "🤔"
 type: "tech"
 topics: ["vue", "react", "decision"]
-published: false
+published: true
+published_at: 2023-08-28 07:00
+publication_name: "paiza"
 ---
 
 paizaではかつてVueをベースにリアクティブなページを構成していましたが、2022年2月頃Reactにすべて移行しました。  
