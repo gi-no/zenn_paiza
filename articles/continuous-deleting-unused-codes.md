@@ -3,7 +3,9 @@ title: "不要コードを継続的に削除し、技術的負債に対抗する
 emoji: "🧹"
 type: "tech"
 topics: ["rails", "ruby", "coverage", "technicaldebt", "ci"]
-published: false
+published: true
+published_at: 2023-08-21 07:00
+publication_name: "paiza"
 ---
 
 paizaでWebエンジニアをやっています藤田と申します。  
