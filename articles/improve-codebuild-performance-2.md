@@ -4,7 +4,7 @@ emoji: "💨"
 type: "tech" # tech: 技術記事 / idea: アイデア
 topics: ["aws","cloud","paiza"]
 published: true
-published_at: 2023-08-30 12:00
+published_at: 2023-08-30 10:00
 publication_name: "paiza"
 ---
 
