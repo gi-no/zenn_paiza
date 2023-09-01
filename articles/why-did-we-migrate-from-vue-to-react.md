@@ -2,7 +2,7 @@
 title: "VueからReactへの移行の理由づけと技術選定の考え方"
 emoji: "🤔"
 type: "tech"
-topics: ["vue", "react", "decision"]
+topics: ["vue", "react", "technicaldebt", "technicaldecision"]
 published: true
 published_at: 2023-08-28 07:00
 publication_name: "paiza"
