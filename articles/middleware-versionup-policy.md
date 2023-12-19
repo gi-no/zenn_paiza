@@ -3,7 +3,7 @@ title: "みんな、どうしてる？ミドルウェアのバージョンアッ
 emoji: "📑"
 type: "idea" # tech: 技術記事 / idea: アイデア
 topics: ["MySQL","Redis","Ruby","NodeJS"]
-published: false
+published: true
 ---
 
 ## はじめに
