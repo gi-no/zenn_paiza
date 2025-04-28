@@ -127,7 +127,6 @@ kuromojiには、どのように解析をかけるかいくつかオプション
 
 kuromojiのフィルターには以下のようなものがあります。
 
-（詳しくは [https://www.elastic.co/guide/en/elasticsearch/plugins/7.9/analysis-kuromoji-analyzer.html](https://www.elastic.co/guide/en/elasticsearch/plugins/7.9/analysis-kuromoji-analyzer.html) などを参照ください）
 
 | kuromoji_baseform | 基本形を活用形に変換する         | はや / しか / ぶす / き / が / いしゃ |
 | --- |----------------------| --- |
@@ -137,6 +136,10 @@ kuromojiのフィルターには以下のようなものがあります。
 | kuromoji_stemmer | JISZ8301の表記揺れを正規化する  | **サーバー** => **サーバ** |
 | lowercase | アルファベットを小文字にする       | OpenSearch => opensearch |
 | cjk_width | 英字を半角に、CJKを全角に統一する   | ｈｅｌｌｏﾊﾛｰ => hello**ハロー** |
+
+ElasticSearchの記事ですが、こちらが参考になるかと思います。
+[https://www.elastic.co/guide/en/elasticsearch/plugins/7.9/analysis-kuromoji-analyzer.html](https://www.elastic.co/guide/en/elasticsearch/plugins/7.9/analysis-kuromoji-analyzer.html) 
+
 
 フィルターの組み合わせをいくつかためしたみたところ、どうやらデフォルトではcjk_width以外が適用されているようでした。
 
