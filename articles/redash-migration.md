@@ -2,17 +2,17 @@
 title: "Redashの移行作業レポート：EC2からECS/RDSへの移行"
 emoji: "😄"
 type: "tech"
-topics: ["redash","aws","paiza"]
+topics: ["redash","aws","dms","ecs","redis"]
 published: false
 publication_name: "paiza"
 ---
 
 ## はじめに
-本記事では、Redashの運用環境をEC2からECS/RDSへ移行した際の手順と、その過程で発生した課題について共有します。
+本記事では、Redashの運用環境をEC2からECS/RDSへ移行した際の手順について共有します。
 
 ## 移行の背景
 
-paizaではRedashを活用してデータ分式を行っていましたが
+paizaではRedashを活用してデータ分析を行っていましたが
 以下の課題を解決するため、Redash運用環境をEC2から各種AWSマネージド・サービスへ移行することにしました。
 
 - **可用性とスケーラビリティの向上**  
@@ -56,24 +56,14 @@ paizaではRedashを活用してデータ分式を行っていましたが
 - ECS（コンテナ管理）
 - Redis(キュー管理)
 
-## 移行手順
+## 移行作業内容
 
 既存DB内容に設定されている内容(ダッシュボードやクエリ等)を引き続き利用するため、DMSを利用したフルロード・レプリケーション移行を実施しました。
-
-1. 移行先Redis作成
-2. 移行先DB作成
-3. DMS動作用の設定を既存DBに反映
-4. DMSリソース作成
-5. ECSサービス作成
-6. 事前作業
-7. サービスを停止して、マネージドサービスへの移行作業
-
-## 移行作業内容
 
 実際の移行作業内容を記載します。
 (ネットワーク設定については割愛します。環境に応じてご準備ください)
 
-### 1. 移行先Redis作成
+### 1. 移行先Redis(valkey)作成
 
 Redashクエリ実行時のキューイングに利用されているRedisを作成します。
 サービス停止を挟む移行のため、中身の移行は不要と判断しました。
@@ -84,12 +74,18 @@ Redashクエリ実行時のキューイングに利用されているRedisを作
 - メンテナンス時間帯の設定
 - クラスターモードは無効
 
+Valkeyを選定した理由：
+- AWSのマネージドサービスとして提供されており、運用負荷の軽減が可能
+- Redis OSSと比較して、セキュリティアップデートやパッチ適用が自動化されている
+- コスト効率が良く、特に小規模な利用ではRedis OSSよりも経済的
+- AWSの他のサービスとの統合が容易で、監視やバックアップの設定が簡単
+
 注意点として、Redisのクラスターモードを無効に設定しないとRedash側でエラーになります。
 
 ![valkey](/images/redash-migration/elasticache-valkey.png)
 
 :::details elasticache.tf
-```json
+```hcl
 resource "aws_elasticache_replication_group" "redash" {
   replication_group_id       = "${aws_elasticache_replication_group_redash}"
   description                = ""
@@ -142,7 +138,7 @@ PostgreSQLに独自設定を追加している場合は、移行先DBにも忘�
 ![paramgp](/images/redash-migration/rds-paramgp.png)
 
 :::details rds.tf
-```json
+```hcl
 resource "aws_db_instance" "redash" {
   identifier               = "${aws_db_instance_redash_identifier}"
   allocated_storage        = 100
@@ -209,13 +205,13 @@ resource "aws_db_parameter_group" "redash_parameter_group" {
     name         = "shared_preload_libraries"
     value        = "pglogical"
   }
+}
 
-  resource "aws_db_option_group" "redash_option_group" {
-    name                     = "${aws_db_option_group_redash_option_group_name}"
-    engine_name              = local.rds_setting.engine
-    major_engine_version     = local.rds_setting.engine_version_for_family_name
-    option_group_description = "${aws_db_option_group_redash_option_group_option_group_description}"
-  }
+resource "aws_db_option_group" "redash_option_group" {
+  name                     = "${aws_db_option_group_redash_option_group_name}"
+  engine_name              = local.rds_setting.engine
+  major_engine_version     = local.rds_setting.engine_version_for_family_name
+  option_group_description = "${aws_db_option_group_redash_option_group_option_group_description}"
 }
 
 ```
@@ -317,7 +313,7 @@ queriesテーブルにはDMSデータ移行タスクにおいて、移行不可�
 ![dms_db_task](/images/redash-migration/dms_db_task.png)
 
 :::details dms_endpoint.tf
-```json
+```hcl
 resource "aws_dms_endpoint" "postgres_source" {
   endpoint_id   = "${aws_dms_endpoint_postgres_source_endpoint_id}"
   endpoint_type = "source"
@@ -345,7 +341,7 @@ resource "aws_dms_endpoint" "postgres_target" {
 :::
 
 :::details dms_replication.tf
-```json
+```hcl
 resource "aws_dms_replication_instance" "migration_instance" {
   replication_instance_id     = "migration-instance"
   replication_instance_class  = "dms.r5.2xlarge"
@@ -608,22 +604,50 @@ resource "aws_dms_replication_task" "postgres" {
         }
     ]
 }
+
+
 ```
 :::
 
-### 5. ECSサービス作成
+### 5. ECR/ECSサービス作成
 
-EC2の代わりにredash機能を提供するweb/workerをECSで作成します。
-redashの利用状況によって、設定項目・運用方法が異なるので詳細は割愛します。
+EC2の代わりにredash機能を提供するweb/workerを動作するためにECR/ECSで作成します。<br>
+一例となりますが、以下のように各種ECR/ECSサービスを準備します。
 
-参考までに今回取った手法は以下になります
+![redash_ecs_task](/images/redash-migration/redash-ecr.png)
 
-- ECSクラスターをterraformで作成
-- redashのdockerイメージをを作成し、ECRへpush
-- ecspressoを利用して、ECSサービスへデプロイ
-- 秘匿情報はパラメータストアを経由して、ECSサービスへ注入
+環境変数に値を設定し、起動コマンドを役割ごとに変更しています。
+(redisやpostgreSQLの接続情報等はパラメータストアから値を参照するようにしています)
 
-### 6. 事前作業
+:::details ECSタスクの設定例
+```json
+{
+  "family": "redash-server",
+  "taskRoleArn": "arn:aws:iam::account:role/ecsTaskRole",
+  "executionRoleArn": "arn:aws:iam::account:role/ecsTaskExecutionRole",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "1024",
+  "memory": "2048",
+  "containerDefinitions": [
+    {
+      "name": "redash-server",
+      "image": "redash/redash:latest",
+      "command": ["server"],
+      "secrets": [
+        {
+          "name": "REDASH_DATABASE_URL",
+          "valueFrom": "/redash/database_url"
+        }
+      ]
+    }
+  ]
+}
+```
+:::
+
+![redash_ecs_env](/images/redash-migration/redash-ecs-env.png)
+
+### 6. データの移行前同期
 
 作成したDMSリソースを利用して既存DBデータを新DBへ移行します。
 エンドポイントの接続設定を確認後、データベース移行タスクを起動します。
@@ -639,7 +663,7 @@ DBサイズによっては数時間以上かかる場合もあるので、本移
 DMSタスクで各テーブルのフルロード完了・検証で失敗がないことを確認後、既存サービスを停止して移行作業を開始します。
 
 :::details EC2インスタンスでの作業内容
-```json
+```bash
 cd ${redashの設定場所}
 
 # postgres以外のdockerサービスを停止する
@@ -662,7 +686,7 @@ pg_restore -h ${rds_postgresql_host} -p 5432 -U postgres -d postgres -Fc queries
 (DBデータ移行のみではシーケンス未設定状態なので、設定されている値を元にズレを修正)
 
 :::details シーケンス調整
-```json
+```sql
 # シーケンスとその紐づくテーブルカラムを特定し、連番のズレを修正
 DO $$
 DECLARE
@@ -686,7 +710,6 @@ BEGIN
       r.seqname, r.colname, r.tablename
     );
   END LOOP;
-
 ```
 :::
 
@@ -696,12 +719,42 @@ BEGIN
 docker-compose down
 ```
 
-以降はECSサービスをデプロイし、ALBの設定変更を行います
+以降はECSサービスへ通信を行うように、ALBの設定変更を行います
 
-- ALBのターゲットグループからEC2インスタンスの登録を解除する
-- ALBのリスナールールを削除する
-- ALBのターゲットグループを削除する
-- ecspressoを用いてECSサービスをデプロイする
+#### ALBターゲットグループの切り替え手順
+
+既存のEC2ベースの構成からECSサービスへの切り替えを行うため、ALBの設定を段階的に変更します。
+**注意**: この作業中はサービスにアクセスできなくなるため、事前に利用者への告知を行ってください。
+
+**1. 既存ターゲットグループからEC2インスタンスの登録解除**
+- EC2コンソールまたはELBコンソールから、現在のターゲットグループを確認
+- RedashサービスのEC2インスタンスを「Draining」状態に変更し、既存接続の完了を待機
+- 完全に切断が完了したら、ターゲットグループからEC2インスタンスを削除
+
+**2. ECSサービス用の新しいターゲットグループ作成**
+- プロトコル：HTTP（または環境に応じてHTTPS）
+- ポート：5000（Redashのデフォルトポート）
+- ターゲットタイプ：IP（ECS Fargateの場合）
+- ヘルスチェック設定：
+  - パス：`/ping`（Redashのヘルスチェックエンドポイント）
+  - 間隔：30秒
+  - タイムアウト：5秒
+  - 正常しきい値：2回
+  - 異常しきい値：3回
+
+**3. ALBリスナールールの更新**
+- 既存のリスナールール（EC2向け）を新しいターゲットグループ（ECS向け）に変更
+- パスベースまたはホストベースのルーティングが設定されている場合は、ルールの優先度も確認
+- 設定変更後、ALBの設定が正しく反映されていることを確認
+
+**4. ECSサービスの起動とターゲットグループへの登録**
+- ECSサービスを起動し、タスクが正常に起動することを確認
+- タスクが自動的にターゲットグループに登録されることを確認
+- ヘルスチェックが正常に完了し、ターゲットが「Healthy」状態になることを確認
+
+**5. 旧リソースのクリーンアップ**
+- 新しい構成でのサービス動作確認が完了した後、不要となった旧ターゲットグループを削除
+- セキュリティグループの設定も必要に応じて更新（ECSタスクからRDS/Redisへのアクセス許可等）
 
 デプロイ完了後、redashの全機能が問題なく実行できることを確認
 
@@ -712,6 +765,9 @@ docker-compose down
 - クエリ実行・保存
 - ユーザ作成・変更
 
+実際の移行作業のダウンタイムは概ね以下になります
+- 既存サービス停止からECSサービス起動まで：約30分(動作確認含む)
+
 以上で、redashの移行作業は完了になります。
 
 ## まとめ
@@ -721,4 +777,4 @@ docker-compose down
 各種スケーリングについても簡単に増減設定ができるので運用の幅も広がりました。
 
 ## 参考
-https://qiita.com/t_odash/items/8d28afd2ffd1e5929b99#20-postgresql%E3%81%AE%E7%A7%BB%E8%A1%8C
+https://qiita.com/t_odash/items/8d28afd2ffd1e5929b99
