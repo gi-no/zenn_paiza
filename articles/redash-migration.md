@@ -4,6 +4,7 @@ emoji: "😄"
 type: "tech"
 topics: ["redash","aws","dms","ecs","redis"]
 published: false
+published_at: 2025-06-16 09:00
 publication_name: "paiza"
 ---
 
