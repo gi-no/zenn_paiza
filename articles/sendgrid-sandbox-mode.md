@@ -6,6 +6,13 @@ topics: [sendgrid, email, ruby, sidekiq]
 published: false
 ---
 
+## 想定読者
+この記事は以下の方を対象としています：
+- 開発環境でのメール送信コストや誤送信リスクに悩んでいるエンジニア
+- SendGridを利用している、または導入を検討している開発チーム  
+- Ruby on Rails + Sidekiqを使ったアプリケーションを運用している方
+- 環境別に柔軟なメール送信制御を実現したい方
+
 ## この記事で伝えたいこと
 
 開発環境で大量のテストメールが実際に送信されていた問題を、SendGridのSandboxモードとSidekiqミドルウェアの組み合わせで解決し、以下を実現しました：
@@ -29,27 +36,59 @@ published: false
 - 情報漏洩やユーザー混乱のリスク
 - 一度の設定ミスで大量誤送信の可能性
 
+具体的な例：
+- テスト用アカウントデータが本番ユーザーのメールアドレスを含んでいた場合、テスト内容が実ユーザーに送信される
+- 開発環境でパスワードリセット機能をテストした際に、誤って実ユーザーにリセットメールが送信される  
+- 一括送信機能のテストで、意図せず本番ユーザー全員にテストメールが配信される
+
 #### 3. テスト環境の制約
 - 実際の送信フローを検証したいが、実送信はしたくない
 - 「現実的なテスト」と「安全性」の両立が困難
 - 環境ごとの柔軟な制御が必要
 
 ## 解決策：SendGrid Sandboxモードの活用
+
 ### Sandboxモードとは
 SendGridのAPIに対して送信リクエストは行うが、実際のメール配信はスキップする機能です。
 
-- **通常モード**: API呼び出し → SendGridが実際にメール配信
-- **Sandboxモード**: API呼び出し → SendGridが正常応答を返す（配信はスキップ）
-```mermaid
-flowchart TB
-  A[アプリケーション] -->|通常| SG[SendGrid]
-  SG -->|メール配信| RCPT[受信者]
+### 📧 通常モード vs Sandboxモード の動作比較
 
-  A2[アプリケーション] -->|SandboxモードON| SG2[SendGrid]
-  SG2 --> 実配信なし
+```mermaid
+flowchart LR
+  subgraph "通常モード(本番環境)"
+    App1[アプリ] -->|API呼び出し| SG1[SendGrid]
+    SG1 -->|✅ メール送信| User1[👤 ユーザー]
+    SG1 -.->|200 OK| App1
+  end
+  
+  subgraph "Sandboxモード(開発環境)"
+    App2[アプリ] -->|API呼び出し| SG2[SendGrid]
+    SG2 -->|❌ 送信しない| Block[🚫]
+    SG2 -.->|202 ACCEPTED| App2
+  end
+  
+  style App1 fill:#ffd4d4
+  style SG1 fill:#ffd4d4
+  style User1 fill:#ffe4e4
+  
+  style App2 fill:#d4ffd4
+  style SG2 fill:#d4ffd4
+  style Block fill:#e4ffe4
 ```
 
-**重要**: アプリケーション側の処理フローは通常通り実行されるため、実環境に近い形でテストが可能です。
+### ポイント解説
+
+#### 通常モード（本番環境）
+- アプリがSendGrid APIを呼び出す
+- SendGridが**実際にメールを送信**
+- ユーザーのメールボックスに届く
+- APIは「200 OK」を返す
+
+#### Sandboxモード（開発・ステージング環境）
+- アプリがSendGrid APIを呼び出す（**同じコード**）
+- SendGridは**メール送信をスキップ**
+- ユーザーには何も届かない（**安全**）
+- APIは「202 ACCEPTED」を返す
 
 ## 実装方針：Sidekiqミドルウェアでジョブ単位制御
 ### 設計のポイント
@@ -58,36 +97,29 @@ flowchart TB
 3. **例外処理**: 社内ドメイン宛など特定条件での実送信を許可
 4. **透過的な実装**: 既存コードへの影響を最小限に
 
-> 経路フロー図（概念図・Mermaid）
-```mermaid
-flowchart TB
-  subgraph Sidekiq経路
-    SC["Rails Controller<br>enqueue Job"] --> CMW["Client MW<br>SendGridSandboxMarker"]
-    CMW --> RJ["Redis Job"]
-    RJ --> SMW["Server MW<br>SendGridSandboxFlagger"]
-    SMW --> WK["Worker / Mailer"]
-  end
-  subgraph Web経路
-    RC["Rails Controller<br>Mailer 呼び出し"] --> SGE["SendGridDeliveryManager"]
-    SGE --> DELIV["SendGridDeliver / BulkDeliver"]
-    DELIV --> API["SendGrid API"]
-  end
-  WK -- invoke --> SGE
-```
+### 🎯 Sidekiqミドルウェアを使った実装アプローチ
 
-> ジョブ実行フロー（概念図）
 ```mermaid
 flowchart LR
-  App[アプリケーション] -->|enqueue| CMW[Sidekiq Client MW]
-  CMW -->|sandboxフラグ付与| Q[(Redis Queue)]
-  Q --> SMW[Sidekiq Server MW]
-  SMW --> W[Worker]
+  subgraph "📨 メール送信ジョブの流れ"
+    App[アプリ] -->|1.ジョブ登録| CMW[🔧 Client MW]
+    CMW -->|2.Sandboxフラグ付与| Redis[(Redis)]
+    Redis -->|3.ジョブ取得| SMW[🔧 Server MW]
+    SMW -->|4.フラグ設定| Worker[Worker]
+    Worker -->|5.メール送信| SG[SendGrid API]
+  end
   
-  App -->|同期呼び出し| M[Mailer]
-  W --> |invoke| M
-  M --> SG
-  SG -->|202 OK| M
+  style CMW fill:#ffe4b5
+  style SMW fill:#ffe4b5
+  style SG fill:#e6f3ff
 ```
+
+#### 動作の流れ
+1. **ジョブ登録**: アプリがメール送信ジョブを登録
+2. **フラグ付与**: ClientミドルウェアがSandboxフラグをジョブに追加
+3. **ジョブ保存**: Redisキューにフラグ付きジョブを保存
+4. **フラグ読み込み**: Serverミドルウェアがフラグを読み込み
+5. **API呼び出し**: SendGrid APIにSandboxモード付きでリクエスト
 
 ## 実装の詳細
 
@@ -210,15 +242,12 @@ end
 | **コスト** | **80%以上削減** |
 | **誤送信リスク** | **100%防止** |
 
-![移行前後の比較](/images/sendgrid-sandbox-mode/sample.png)
-
 ### 📊 環境別の改善効果
 
-- **開発環境**: 99%削減（CI/CDパイプライン含む）
-- **ステージング環境**: 95%削減（社内ドメイン宛のみ実送信）
+- **開発環境・ステージング環境**: 95%削減（社内ドメイン宛のみ実送信）
 - **本番環境**: 影響なし（通常通り送信）
 
-特に開発環境での大量テストや、CI/CDパイプラインでの自動テスト実行時の送信抑制が大きく貢献しています。
+特に開発・ステージング環境での大量配信テストの送信抑制が大きく貢献しています。
 
 ## 運用上のポイント
 
@@ -253,11 +282,9 @@ SendGridのSandboxモードとSidekiqミドルウェアを組み合わせるこ�
 #### 運用面  
 - 環境変数による制御でデプロイがシンプルに
 - 社内ドメイン宛の例外処理が検証効率を大幅改善
-- コストの「見える化」が経営層の理解を促進
 
 ### 🚀 今後の展望
 - SMTP経由の送信への対応検討
 - 他サービスへの横展開
-- より詳細なメトリクス収集と監視体制の構築
 
 本取り組みは、コスト削減とリスク低減を両立しながら開発効率を維持する、実用的なソリューションとなりました。同様の課題を抱えるチームの参考になれば幸いです。
