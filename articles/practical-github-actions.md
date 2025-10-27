@@ -3,7 +3,8 @@ title: "GitHub ActionsでCIを構築するときに考えたいこと"
 emoji: "😺"
 type: "tech"
 topics: ["githubactions", "test", "ci", "rspec", "container"]
-published: false
+published: true
+published_at: 2025-10-28 06:00
 publication_name: "paiza"
 ---
 
