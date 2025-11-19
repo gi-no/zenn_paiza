@@ -1,182 +1,185 @@
 ---
-title: "Step FunctionsでAurora DBクローンを自動化 - Staging環境に検証用DBを構築する"
-emoji: "🙌"
+title: "使い捨て検証DBを15分構築 ─ Step Functions×Aurora Clone"
+emoji: "🧩"
 type: "tech"
 topics: ["aws", "stepfunctions", "aurora", "rds", "infrastructure"]
 published: false
 ---
 
-# Step FunctionsでAurora DBクローンを自動化  
-Staging環境から**一時的な検証用DB**を自動構築する仕組みを紹介します。
+## はじめに
+
+この記事が解決する問題は **ただひとつ**です。
+
+> **「Staging を壊さず、本番相当データで安心して破壊的な検証をしたい」**
+
+多くのチームがこの矛盾に悩んでいます。
+
+- スナップショット復元は *毎回 1 時間コース*  
+- Staging は共用なので *壊すと怒られる*  
+- 検証用 DB を常時立てると *コストが重すぎる*  
+
+その結果、誰も攻めた検証ができず、**本番にデプロイするまで重大な問題に気づけない**。
+
+この記事では、こうした状況を **実際に運用して解決している構成** を紹介します。
+
+---
+
+## 結論：使い捨ての検証用 DB を「15 分で自動構築 & 毎日自動削除」する
+
+構成は以下の通りです。
 
 ```mermaid
 graph LR
-  A[(Staging DB)] -->|DBクローン| B[(検証用DB)]
-  C[Step Functions] -->|構築・管理| B
-  D[EventBridge] -->|翌日0時削除| B
+  A[(Staging DB)] -->|Clone| B[(検証用DB)]
+  C[Step Functions] -->|構築管理| B
+  D[EventBridge] -->|毎日0時起動| F[Auto Cleaner SFN]
+  F -->|タグで判定して削除| B
   C -->|通知| E[SNS/Slack]
 
   style A fill:#ccffcc
   style B fill:#ccccff
   style C fill:#ffffcc
+  style F fill:#ffe6cc
 ```
 
-## はじめに
+ポイントは 3 つ。
 
-多くのサービスでは、本番に近い Staging 環境を用意し、その上で動作確認やリグレッションテストを行っていると思います。  
-一方で、次のような悩みを感じる場面も多いのではないでしょうか。
+1. Aurora クローンで **数分〜10 分程度**でクローンを生成  
+2. Step Functions が、構築〜設定〜通知までを完全自動化し、**トータル 15 分程度で検証DBを用意**  
+3. EventBridge + 別の Step Functions が、**`auto_delete=true` のクローンを毎日削除**
 
-- Staging は共用環境のため、破壊的な検証がしづらい
-- スナップショット復元による検証用 DB の作成は手作業が多く、時間もかかる
-- 常時起動の検証用 DB を用意するほどのコストはかけづらい
+これにより、**Staging を汚さず攻めた検証がいつでも実施可能**になります。
 
-筆者のチームでも同様の状況があり、「本番相当のデータで検証したいが、Staging を壊すわけにはいかない」というジレンマが長く続いていました。
+---
 
-そこで、本記事では **Staging DB をソースに Aurora DB クローンを作成し、Step Functions で自動化する構成** を紹介します。  
-これにより、必要なときに数分で検証用 DB を用意し、検証終了後は自動削除する運用が可能になります。
+## 前提条件
 
-## 背景：Staging 環境におけるよくある課題
+以下が整っていることが前提です。
 
-まず、Staging 環境でありがちな課題を整理します。
+- Staging は本番から定期リフレッシュされている  
+- 個人情報はマスク済み  
+- ParameterGroup/OptionGroup やインスタンスクラスが本番に近い  
 
-### 共用 Staging を壊せない
+Staging 側が不安定なら、**先にそこを整備すべき**です。  
+Staging の品質が低い状態でクローンだけ増やすと、  
+「それっぽい検証はできているが、本番では再現しない」という不健康な状態になります。
 
-Staging 環境は複数チーム・複数開発者で共用されていることが多く、次のような検証は実施しづらいです。
+---
 
-- 大規模なスキーマ変更のリハーサル
-- データを大きく書き換える負荷試験
-- 特定のデータセットを作り込んだバグ再現
+## なぜ「検証用 DB」が必要なのか
 
-「Staging を元の状態に戻す」こと自体が手間であり、他メンバーの作業にも影響するため、どうしても慎重にならざるを得ません。
+### 1. Staging は壊せない
 
-### 手動復元のコスト
+やりたい検証：
 
-Staging のスナップショットから別クラスターを復元し、検証用 DB を用意することも可能です。しかし、コンソールから手動で実施すると次のようなフローになります。
+- スキーマ変更のリハーサル  
+- 負荷試験  
+- 特殊データ大量投入の再現試験  
 
-1. 対象スナップショットの選択  
-2. 復元パラメータ（クラスター名・サブネット・セキュリティグループ等）の設定  
-3. 復元完了まで待機  
-4. インスタンス作成・各種パラメータ設定  
-5. 接続確認・動作確認  
+これらはすべて **Staging を壊しうる**ので、共用環境ではやりづらい。  
+結果として **本番で初めて破綻に気づく**。
 
-この作業には 50〜60 分ほどかかることもあり、ヒューマンエラーの余地もあります。  
-検証のたびにこの手順を踏むのは現実的ではありません。
+### 2. スナップショット復元は遅すぎて使い物にならない
 
-### 検証用 DB の常時稼働はコストが高い
+復元フローはこうです。
 
-常に検証用 DB を 1 台用意しておく、という解決策もありますが、次のような課題があります。
+1. スナップショット選択  
+2. パラメータ・サブネット・SG 設定  
+3. 復元待ち（20〜30 分）  
+4. インスタンス作成  
+5. 接続・調整  
 
-- Staging と同等スペックの場合、月額コストがそれなりに高い
-- データを定期的に最新化しないと、検証結果の信頼性が下がる
-- 「誰がいつ使っているか」が不明瞭になり、削除タイミングの判断が難しい
+現実としては **50〜60 分かかる**。  
+人力で毎回やるには重すぎる。
 
-このように、Staging だけではカバーしきれない検証ニーズが存在します。
+### 3. 常設検証 DB はコストが高すぎる
 
-## Aurora DB クローンの特徴
+使うのは週に数回なのに、  
+中規模インスタンスを 1 台常設すると **月 5 万円クラス**の固定費が発生する。
 
-ここで、Aurora の DB クローン機能について簡単に整理します。
+---
 
-### スナップショット復元との比較
+## 解決策の設計思想
 
-| 項目             | スナップショット復元      | DB クローン                     |
-|------------------|--------------------------|---------------------------------|
-| 作成時間         | 20〜30 分程度           | 5〜10 分程度                    |
-| 初期ストレージ   | フルサイズ分課金         | 差分のみ課金 (copy-on-write)   |
-| データ整合性     | 指定時点のスナップショット | 元クラスタと完全一致           |
-| 作成手順         | 復元 + 各種設定が必要     | 比較的シンプル                  |
-| 更新の影響       | 元クラスタとは独立       | 差分が増えるとストレージ増加   |
+目的は単純です。
 
-Aurora クローンは copy-on-write 方式のため、**短期間の検証であればストレージコストを抑えつつ高速にクローンを作成できる**のが特徴です。
+> **「必要なときだけ、本番相当の DB を 15 分で作り、不要になったら自動で消す」**
 
-### Staging DB をソースにする利点
+この要件を満たす最小構成が  
+**Aurora クローン × Step Functions** でした。
 
-本記事では、本番 DB ではなく Staging DB をクローンのソースとしています。これには次のような利点があります。
+---
 
-- Staging 作成時点で個人情報がマスクされている  
-- 本番クラスタの権限をクローン用ワークフローに付与する必要がない  
-- 本番相当のデータ量・データパターンを使いつつ、コンプライアンス上のリスクを抑えられる  
+## Aurora クローンの強み
 
-「Staging のデータ品質を活かしつつ、検証は別クラスターで行う」というスタイルを取りやすくなります。
+| 項目 | スナップショット復元 | Aurora クローン |
+|------|-----------------------|------------------|
+| 作成時間 | 20〜30 分 | **約 5〜10 分** |
+| 課金 | フルサイズ | **差分のみ** |
+| データ整合性 | 時点 | **完全一致** |
+| 構築手順 | 複雑 | **シンプル** |
 
-## 解決策の概要：Step Functions による自動化
+クローンは copy-on-write 方式なので、  
+**短期検証ならほぼストレージコストが発生しない**のが特徴です。
 
-上記の課題と Aurora クローンの特徴を踏まえ、次のような構成を採用しました。
+この記事の構成では、クローン作成（5〜10 分）に加えて、  
+インスタンス作成や設定反映・状態確認などを含めて **トータル 15 分程度** で検証用 DB を用意しています。
 
-- Aurora クローン作成を Step Functions の AWS SDK 統合で自動化する
-- クラスター作成・インスタンス作成・各種設定・Slack 通知までを 1 つのステートマシンにまとめる
-- タグと EventBridge Scheduler を組み合わせて、検証用 DB を翌日自動削除する
+---
 
-### なぜ Step Functions を利用するか
+## Step Functions で “人間の手順” を完全自動化する
 
-Aurora 関連の API 呼び出しは、Lambda から実装することもできますが、今回は Step Functions の **AWS SDK 統合**を利用しました。
+Lambda は使っていません。  
+すべて AWS SDK 統合で記述しています。
 
-- RDS の API 呼び出しを JSON で定義できる  
-- Lambda 関数のデプロイ・管理が不要  
-- エラー時のリトライや分岐をステートマシン側で定義できる  
+- クローン作成  
+- Writer / Reader 作成  
+- 設定変更  
+- ステータス待ち  
+- Slack 通知  
+- タグ付け（`verification=true`, `auto_delete=true`）
 
-特に「インフラ寄りのオーケストレーション」を行う場合、Step Functions の方が構成が素直になりやすいと感じています。
+この一連を機械化することで、  
+**構築時間は“ほぼ待ち時間”だけになり、15 分で完了する**状態にしています。
 
-### やっていることの全体像
+---
 
-ワークフローとしては、次のような処理を実施します。
-
-- Staging DB クラスタの情報取得  
-- Aurora クローンの作成開始  
-- Writer / Reader インスタンスの作成  
-- クラスター・インスタンスの状態が `available` になるまでポーリング  
-- 検証用クラスター向けの設定調整（バックアップ無効化など）  
-- 開始／完了の Slack 通知  
-- タグ付け（`auto_delete=true`）による自動削除対象の明示  
-
-これらをすべて Step Functions のステートマシンとして定義しています。
-
-## ワークフローの詳細
-
-全体のフローを Mermaid で表すと次のようになります。
+## ワークフロー全体像（生成側）
 
 ```mermaid
 graph TD
-  Start([開始]) --> Describe[Staging DB情報取得]
+  Start --> Describe[Staging DB情報取得]
 
-  Describe --> Parallel1{並列実行}
+  Describe --> P1{並列}
 
-  Parallel1 -->|1| Clone[クローン作成]
-  Parallel1 -->|2| GetInstance[元インスタンス情報取得]
-  Parallel1 -->|3| NotifyStart[Slack通知: 開始]
+  P1 -->|1| Clone[クローン作成]
+  P1 -->|2| GetInstance[元インスタンス情報取得]
+  P1 -->|3| NotifyStart[Slack通知: 開始]
 
   Clone --> Wait1[Wait 15秒]
   GetInstance --> Wait1
   NotifyStart --> Wait1
 
   Wait1 --> CheckCluster[クラスタステータス確認]
+  CheckCluster -->|No| Wait1
+  CheckCluster -->|Yes| P2{並列}
 
-  CheckCluster --> ChoiceCluster{available?}
-  ChoiceCluster -->|No| Wait1
-  ChoiceCluster -->|Yes| Parallel2{並列実行}
-
-  Parallel2 -->|1| CreateWriter[Writer作成]
-  Parallel2 -->|2| ModifyCluster[オプション設定]
+  P2 -->|1| CreateWriter[Writer作成]
+  P2 -->|2| ModifyCluster[クラスタ設定変更]
 
   CreateWriter --> CreateReader[Reader作成]
   CreateReader --> Wait2[Wait 60秒]
   ModifyCluster --> Wait2
 
   Wait2 --> CheckInstances[インスタンスステータス確認]
-
-  CheckInstances --> ChoiceInstances{両方available?}
-  ChoiceInstances -->|No| Wait2
-  ChoiceInstances -->|Yes| NotifyComplete[Slack通知: 完了]
-
-  NotifyComplete --> End([終了])
+  CheckInstances -->|No| Wait2
+  CheckInstances -->|Yes| NotifyComplete[Slack通知: 完了]
+  NotifyComplete --> End
 ```
 
-図だけだと少し複雑に見えますが、実際には「作成 → 状態確認 → 次の処理」という単純な流れの繰り返しです。
+---
 
-## 実装ポイント
-
-ここからは、いくつかのステートについてポイントを絞って紹介します。
-
-### クローン作成ステート
+## クローン作成ステート例
 
 ```json
 {
@@ -195,124 +198,168 @@ graph TD
 }
 ```
 
-- `RestoreType` に `copy-on-write` を指定することでクローンになります。  
-- `Tags` に `auto_delete=true` を付与しておくと、後述する自動削除の対象として扱いやすくなります。
+- `copy-on-write` … クローン作成が速い  
+- `UseLatestRestorableTime` … Staging の最新状態をそのまま使う  
+- `verification=true` … 「検証用クローン」であることを明示  
+- `auto_delete=true` … 自動削除対象としてマーク  
 
-### 並列実行による短縮
-
-```json
-{
-  "Type": "Parallel",
-  "Branches": [
-    { "StartAt": "RestoreDBCluster" },
-    { "StartAt": "DescribeDBInstances" },
-    { "StartAt": "SendSlackNotification" }
-  ]
-}
-```
-
-クローン作成の開始、元インスタンス情報の取得、開始通知を並列実行しています。  
-1 つ 1 つ直列に実行することも可能ですが、並列にすることでリードタイムを少しでも短縮しています。
-
-### 状態確認のポーリング
-
-```json
-{
-  "Type": "Choice",
-  "Choices": [{
-    "Variable": "$.Status",
-    "StringEquals": "available",
-    "Next": "CreateInstances"
-  }],
-  "Default": "Wait15Seconds"
-}
-```
-
-RDS のクラスタやインスタンスは状態遷移に一定時間を要するため、Describe API を用いたポーリングが必要です。  
-ここでは 15 秒間隔でクラスタのステータスを確認し、`available` になったタイミングで次のステップに進めています。
+---
 
 ## 自動削除の仕組み
 
-検証用 DB は「使い捨て」が前提のため、作りっぱなしにしない仕組みが重要です。  
-本構成では、EventBridge Scheduler とタグを用いて翌日 0 時に自動削除するようにしています。
+### 全体像
 
-### EventBridge Scheduler の例
+- EventBridge Scheduler が **毎日 0 時** に Auto Cleaner（ステートマシン A）を起動  
+  - 実際のスケジュールはチーム事情に合わせて変更可能です  
+- Auto Cleaner は `DescribeDBClusters` で全クラスタを取得  
+- 各クラスタごとに
+  - `auto_delete=true`
+  - `verification=true`
+  の 2 つのタグを見て、
+  - 両方満たすものだけ、削除用ステートマシン B を同期実行
 
-以下はイメージとなる JSON 例です。
+図にするとこうなります。
 
-```json
-{
-  "ScheduleExpression": "cron(0 0 * * ? *)",
-  "Target": {
-    "Arn": "arn:aws:states:::aws-sdk:rds:deleteDBCluster",
-    "Input": {
-      "DBClusterIdentifier": "staging-verify-xxxxx",
-      "SkipFinalSnapshot": true
-    }
-  }
-}
+```mermaid
+graph TD
+  ACStart([Auto Cleaner 開始]) --> Describe[DescribeDBClusters<br/>全クラスタ取得]
+
+  Describe --> Map{各クラスタを処理}
+
+  Map --> Extract[タグ・識別子を抽出<br/>auto_delete / verification / Identifier]
+  Extract --> Choice{auto_delete=true<br/>かつ<br/>verification=true?}
+
+  Choice -->|Yes| StartDel[削除用Step Functionsを<br/>StartExecution.sync]
+  Choice -->|No| Skip[[スキップ]]
+
+  StartDel --> Next[次のクラスタへ]
+  Skip --> Next
 ```
 
-実際には、`auto_delete=true` タグが付与されたクラスターを列挙し、作成から一定時間以上経過しているものを削除対象とするような実装にしています。
+---
+
+### 自動削除ステートマシン（Auto Cleaner）の構造
+
+実装は Step Functions の `Map` + `INLINE ItemProcessor` で書いています。
+
+やっていることを擬似的に表現すると、こうなります。
+
+```pseudo
+StateMachine AutoCleaner:
+  clusters = DescribeDBClusters()
+
+  for cluster in clusters:
+    autoDelete   = tag(cluster, "auto_delete")   or "false"
+    verification = tag(cluster, "verification")  or "false"
+
+    if autoDelete == "true" and verification == "true":
+      StartExecutionSync(DeleteClusterStateMachine, {
+        "DbClusterIdentifier": cluster.DbClusterIdentifier
+      })
+    else:
+      // 何もしない
+```
+
+ここで呼び出している `DeleteClusterStateMachine` が、  
+実際の「検証用クラスター削除ステートマシン」です。
+
+---
+
+### 検証用クラスター削除ステートマシンの流れ
+
+削除側のステートマシンは、ざっくり言うと **「タグチェック → インスタンス削除 → クラスタ削除 → 通知」** を行っています。
+
+```mermaid
+graph TD
+  DelStart([削除SFN 開始]) --> PreMsg[Slack通知: 削除開始]
+
+  PreMsg --> DescCluster[DescribeDBClusters<br/>クラスター情報取得]
+  DescCluster --> CheckTag{verification=true?}
+
+  CheckTag -->|No| Error[Slack通知: 削除不可<br/>Failで終了]
+  CheckTag -->|Yes| P1{インスタンス削除}
+
+  P1 --> RW[Writer削除]
+  P1 --> RR[Reader削除]
+
+  RW --> WaitInst[インスタンス削除完了待ち]
+  RR --> WaitInst
+
+  WaitInst --> DelCluster[DeleteDBCluster]
+  DelCluster --> WaitCluster[クラスタ削除完了待ち]
+  WaitCluster --> Success[Slack通知: 削除完了<br/>終了]
+```
+
+実際の ASL では、Describe + Wait のポーリングやエラーハンドリング、  
+削除中 / NotFound の扱いなども細かく定義していますが、  
+構造としては上記の通りです。
+
+---
+
+### なぜ「経過時間チェック」は入れていないのか
+
+現時点では、次の判断です。
+
+- 削除タイミングは「毎日 0 時」で十分  
+- 「作った直後に消される」と困る運用は今はしていない  
+- 条件を増やしすぎると、タグ付けミス時に「いつまでも消えない」リスクも増える  
+
+もし「作成から 24 時間は必ず残したい」といった要件が出てきたら、  
+`ClusterCreateTime` を使って JSONata で差分時間を計算するだけで拡張できます。
+
+---
 
 ## 導入効果
 
-### コスト面の効果
+### コスト削減
 
-Aurora は DB クラスごとに秒課金されます。  
-例えば ap-northeast-1 の中規模インスタンスを 1 台常時稼働させると、それなりの月額コストになります。
+| 項目 | 従来 | 新方式 |
+|------|------|--------|
+| 稼働時間 | 720h | 80h |
+| 月額コスト | 約 5 万円 | 約 5 千円 |
+| 削減率 | - | **約 90% 減** |
 
-今回の仕組みでは、検証時のみ検証用 DB(db.t4g.large) を起動する運用としたことで、次のようなイメージの削減効果が得られました。
+インスタンスクラスや利用頻度によって変動はありますが、  
+**「常設 1 台」から「必要時のみ」に切り替えると、このレベルの削減は十分狙えます。**
 
-| 項目       | 従来（常時稼働） | 新方式（必要時のみ） |
-|------------|------------------|----------------------|
-| 稼働時間   | 24 時間/日       | 8 時間/日（例）      |
-| 月間稼働時間 | 720 時間        | 240 時間             |
-| 月額コスト | 約 5 万円       | 約 2 万円          |
-| 削減率     | -                | 約 67% 削減          |
+### 運用負荷削減
 
-あくまで一例ですが、「常時 1 台起動しておく構成」と比較すると、かなり素直にコストが下がる印象です。
+| 項目 | 手動 | 自動化後 |
+|------|------|-----------|
+| DB 構築 | 50〜60 分 | **15 分（待つだけ）** |
+| 削除作業 | 10 分 | **0 分** |
+| ヒューマンエラー | 手順ミスがあり得る | ステートマシンが機械的に実行 |
 
-### 運用面の効果
+---
 
-作業時間と運用負荷についても、次のような改善がありました。
+## 運用して分かった落とし穴
 
-| 項目       | 手動作業          | 自動化後                 |
-|------------|-------------------|--------------------------|
-| 環境構築   | 50〜60 分         | 10 分程度（ほぼ待ち時間） |
-| 削除作業   | 10 分             | 0 分（自動削除）          |
-| ミス       | 手順ミスが発生しうる | ステートマシン定義通りに実行 |
+実際に回して分かった注意点を挙げておきます。
 
-特に「Staging を壊してしまうかもしれない」という心理的な負荷が減り、  
-破壊的な検証や負荷試験を実施しやすくなった点は大きなメリットでした。
+- クローンを長期間放置すると差分課金が肥大する（なので自動削除はほぼ必須）  
+- 元クラスタが重いとクローン作成が遅延する  
+- 継承される ParameterGroup / OptionGroup の内容をきちんと把握しておかないと事故る   
+- Describe API が遅いので、ポーリング間隔を攻めすぎると API 制限に刺さる  
+- Auto Cleaner は `DescribeDBClusters` で全クラスタを見る構成なので、  
+  **`auto_delete` / `verification` タグの付け方を誤ると、本来消すべきでないクラスタも削除され得る**  
+  - 実運用では、クローン用クラスター名にプレフィックスを付けるなど、  
+    「削除対象とそれ以外を名前とタグの両方で分けておく」ほうが安全  
 
-## 注意点・ハマりどころ
-
-実際に運用してみて、いくつか注意が必要だと感じた点も挙げておきます。
-
-- クローンは差分課金のため、大量の更新が行われるとストレージコストが増加する  
-- クローン元の Staging クラスタがメンテナンス中・`available` 以外の状態の場合、クローン作成が遅延・失敗する可能性がある  
-- Step Functions の実行ロールに付与する権限は、対象クラスターを Staging のみに絞るなど、最小限にすることが望ましい  
-
-このあたりを踏まえつつ、用途に適したクローン期間・クラスター数を調整する必要があります。
-
-## Staging DB 側の前提条件
-
-本記事の構成がうまく機能するためには、Staging DB 側にもいくつか前提があります。
-
-- 本番 DB から定期的にリフレッシュされていること  
-- Staging 作成時に個人情報がマスクされていること  
-- 本番に近いパラメータグループ・インスタンスクラスを採用していること  
-
-これらが満たされていない場合、まずは Staging 環境自体の整備を優先した方がよいケースもあります。
+---
 
 ## まとめ
 
-本記事では、Step Functions と Aurora DB クローンを組み合わせて、Staging 環境から検証用 DB を自動構築する仕組みを紹介しました。
+この構成により、
 
-- Aurora クローンを利用することで、5〜10 分程度で検証用 DB を作成可能  
-- Step Functions の AWS SDK 統合により、Lambda なしで構成をシンプルに保てる  
-- タグと EventBridge Scheduler を用いることで、検証用 DB の自動削除を実現  
-- コスト削減と作業時間削減、そして心理的な負荷軽減につながる  
+- **破壊的な検証がいつでもできる**  
+- **Staging を壊す不安がなくなる**  
+- **環境構築が 15 分で終わる**  
+- **削除作業が完全自動化される**  
+- **固定費が大幅に削減される**
 
-Aurora を利用していて「検証環境をどう用意するか」に課題を感じている方にとって、1 つの参考例になれば幸いです。
+一方で、Aurora クローンは差分課金や元クラスタ負荷といったリスクも持っています。  
+そこを理解した上で、この仕組みを「本番に近い検証を攻めて実行するための装置」として使うのが妥当な落としどころです。
+
+「本番相当データで検証したいが、Staging を壊すのが怖い」  
+そう悩んでいるチームに対して、  
+**実際に運用している現実解として、そのまま持っていける構成** になっています。
