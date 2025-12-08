@@ -3,7 +3,8 @@ title: "OpenSearchを用いたフリーワード検索の改善"
 emoji: "👻"
 type: "tech" # tech: 技術記事 / idea: アイデア
 topics: ["opensearch", "kuromoji", "paiza"]
-published: false
+published: true
+publication_name: "paiza"
 ---
 
 # はじめに
