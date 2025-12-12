@@ -5,6 +5,7 @@ type: "tech"
 topics: ["aws", "stepfunctions", "aurora", "rds", "infrastructure"]
 published: true
 published_at: 2025-12-14 06:00
+publication_name: "paiza"
 ---
 
 ## はじめに
