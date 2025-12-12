@@ -3,7 +3,8 @@ title: "使い捨て検証DBを15分構築 ─ Step Functions×Aurora Clone"
 emoji: "🧩"
 type: "tech"
 topics: ["aws", "stepfunctions", "aurora", "rds", "infrastructure"]
-published: false
+published: true
+published_at: 2025-12-14 06:00
 ---
 
 ## はじめに
