@@ -1,5 +1,5 @@
 ---
-title: ""
+title: "巨大なOpenAPI定義を扱いやすくするためにやったこと"
 emoji: "⚙️"
 type: "tech" # tech: 技術記事 / idea: アイデア
 topics: ["フロントエンド", "openapi"]
@@ -9,7 +9,7 @@ publication_name: "paiza"
 
 ## はじめに
 
-[paiza株式会社](https://www.paiza.co.jp/)でエンジニアをやっている川辺(yaruki00)です。
+[paiza株式会社](https://www.paiza.co.jp/)でエンジニアをしている川辺(yaruki00)です。
 
 この記事では、社内のフロントエンド改善委員会で半期に取り組んだ、OpenAPIを用いた開発フロー改善について紹介します。
 
