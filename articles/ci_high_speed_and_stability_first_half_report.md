@@ -126,7 +126,9 @@ flowchart LR
   lambda --> s3 --> athena --> grafana
 ```
 
-<!-- TODO: Grafanaダッシュボードのスクリーンショット（マスキング後）を挿入予定 -->
+![Grafanaで可視化したCI失敗履歴](/images/ci_high_speed_and_stability_first_half_report/grafana.png =500x)
+
+*可視化の雰囲気を伝えるためのスクリーンショットです。実際のファイル名などはマスキングしています。*
 
 これにより、CIが落ちたときに過去の失敗履歴を確認しやすくなりました。
 
