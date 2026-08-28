@@ -4,6 +4,7 @@ emoji: "🐷"
 type: "tech" # tech: 技術記事 / idea: アイデア
 topics: ["bigquery", "redash"]
 published: true
+publication_name: "paiza"
 ---
 
 # はじめに
