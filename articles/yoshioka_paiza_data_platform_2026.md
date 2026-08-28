@@ -34,7 +34,7 @@ paizaのWebサービスのデータはデータベース(RDB / MySQL, Aurora)に
 
 既存のインフラを利用していたのでデータ基盤の導入・運用リソースも不要で、当初の小規模な運用では適切でしたが、データや分析の質・量が増えるにしたがって、以下のような課題が出てきました。
 
-- **GASが適切の管理が困難**
+- **GASは適切な管理が困難**
 
   GASは非常に便利ですが、適切な運用が難しいところがあります。
   まず、GitHubなどの複数での開発を想定したソースコード管理システムがありませんでした。Claspなども利用する選択肢もありますが、適切な運用ルールが必要になるのと、GASの手軽さは減ってしまいます。
@@ -61,7 +61,7 @@ paizaのWebサービスのデータはデータベース(RDB / MySQL, Aurora)に
 
 これらの課題を解決するため、BigQueryをデータウェアハウスとしたデータ基盤を構築しました。
 
-BigQueryはGoogleの高度で柔軟なインフラ・分析環境を完全重量料金・マネージドサービスで利用できることから、スモールスタートに適切と考えています。データ基盤の構成は、当時主流だった digdag / embulk を用いて日次でデータベースをBigQueryに同期する形でした。
+BigQueryはGoogleの高度で柔軟なインフラ・分析環境を完全従量料金・マネージドサービスで利用できることから、スモールスタートに適切と考えています。データ基盤の構成は、当時主流だった digdag / embulk を用いて日次でデータベースをBigQueryに同期する形でした。
 
 データ分析の可視化・共有にはオープンソースのRedashを導入しました。アドホックなデータ分析はRedashを通じてBigQueryで行い、その後KPI集計もRedashを通じてBigQueryから取得することで、GASのロジック依存を大幅に減らしました。
 
@@ -117,7 +117,7 @@ https://cloud.google.com/blog/ja/products/databases/new-cloud-based-cdc-replicat
 
 データ分析用のテーブルについて当初はデータベースのテーブルのレプリカをほぼそのまま利用していました。しかしながら、必ずしもデータ分析に向いた構造ではないこと、例えば複数のデータソース間での分析が難しかったり、カラムの変換やJOINなど複雑なクエリを書く必要があるなど課題があったため、徐々に三層構造を移行することを視野にDataformを用いて分析用テーブルを作成しました。
 
-利用状況が明確でない状況で分析用のテーブルのみを最初から完成された用意することは難しいので、徐々に必要な分析用テーブルを作成して移行していきました。三層構造でのデータウェアハウス層にあたる分析用テーブルには super というprefixをつけていくことにしました。(例: applicants(応募者)=>super_applicants)
+利用状況が明確でない状況で分析用のテーブルのみを最初から完成された形で用意することは難しいので、徐々に必要な分析用テーブルを作成して移行していきました。三層構造でのデータウェアハウス層にあたる分析用テーブルには super というprefixをつけていくことにしました。(例: applicants(応募者)=>super_applicants)
 
 明確に層が分けれているわけではないのですが、以下のような構造にしています。
 
@@ -175,7 +175,7 @@ https://podcasts.apple.com/jp/podcast/ep17-redash%E3%81%AE%E3%83%AC%E3%82%AD%E3%
 
 - 依頼ベースの分析
 
-  対応できる数も少なく、時間がかかり、改善ループが回しにくく、依頼者のデータ解像度も上がりにく単純作業の繰り返しになりやすい。( テーブルの整備で徐々には改善していましたが。 )
+  対応できる数も少なく、時間がかかり、改善ループが回しにくく、依頼者のデータ解像度も上がりにくく単純作業の繰り返しになりやすい。( テーブルの整備で徐々には改善していましたが。 )
 
 これらの課題は簡単には解決が難しい部分もありましたが、ここでAI時代がやってきます。
 
@@ -277,7 +277,7 @@ SlackのGCPなどのID・認証情報などを適時与える。
 
 - データ分析ガイドライン
 
-  代表値には平均に加えて中央値なども活用する、選択バイアスを考慮する、因果と相関の区別、事実と推測の区別、指標の妥当戦の確認、シグナルかノイズかの確認(優位性)など。
+  代表値には平均に加えて中央値なども活用する、選択バイアスを考慮する、因果と相関の区別、事実と推測の区別、指標の妥当性の確認、シグナルかノイズかの確認(優位性)など。
 
 - 一般的なドメイン知識
 
@@ -285,9 +285,9 @@ SlackのGCPなどのID・認証情報などを適時与える。
 
 
 
-最初の信頼が大事と思いましたので、最初はほぼSlackに張り付き、ほぼ全てのAIの回答を確認してコード・コンテキストの修正などを行なっていました。当初は、ほぼ全ての問い合わせで何らかの対応をする日強がありましたが、1ヶ月程度で1/10ぐらいになり、3ヶ月程度たった現状では、基本的な問い合わせで大きく間違うことはほぼなくなりました。
+最初の信頼が大事と思いましたので、最初はほぼSlackに張り付き、ほぼ全てのAIの回答を確認してコード・コンテキストの修正などを行なっていました。当初は、ほぼ全ての問い合わせで何らかの対応をする必要がありましたが、1ヶ月程度で1/10ぐらいになり、3ヶ月程度たった現状では、基本的な問い合わせで大きく間違うことはほぼなくなりました。
 
-結果として、運用開始後約3ヶ月で80名以上、問い合わせ数4,000以上、対話スレッド数1,000以上、と思った以上に活用されている状況です。いかに多様な需要があるか、いかに今までデータ分析の需要にいかに対応しきれていなかったかを痛感しました。リードタイムは人への依頼に対して10,000倍以上、コストも人への依頼に対して1/100以下になったと考えられます。
+結果として、運用開始後約3ヶ月で80名以上、問い合わせ数4,000以上、対話スレッド数1,000以上、と思った以上に活用されている状況です。いかに多様な需要があるか、いかに今までデータ分析の需要にいかに対応しきれていなかったかを痛感しました。リードタイムは人への依頼に対して1/10,000以下(数日→数分以下)、コストも人への依頼に対して1/100以下になったと考えられます。
 
 現状、以下のようなことが課題と感じています。
 
@@ -333,20 +333,32 @@ SlackのGCPなどのID・認証情報などを適時与える。
 paizaのデータ基盤の今まで、現状、今後について紹介しました。paizaでは全社的に積極的なデータ活用を行っており、多くの職種でデータ活用をすすめています。興味がありましたら、カジュアル面談などに気軽にご応募ください。https://www.paiza.co.jp/recruit/
 
 
-##　参考情報
+## 参考情報
 
 DateStream:
-[新しいサーバーレスの Datastream で、変更データのキャプチャとレプリケーションを最大限に活用](https://cloud.google.com/blog/ja/products/databases/new-cloud-based-cdc-replication-across-databases)
 
-[Unlock the power of change data capture and replication with new, serverless Datastream](https://cloud.google.com/blog/products/databases/new-cloud-based-cdc-replication-across-databases?hl=en)
+  - [新しいサーバーレスの Datastream で、変更データのキャプチャとレプリケーションを最大限に活用](https://cloud.google.com/blog/ja/products/databases/new-cloud-based-cdc-replication-across-databases)
+  - [Unlock the power of change data capture and replication with new, serverless Datastream](https://cloud.google.com/blog/products/databases/new-cloud-based-cdc-replication-across-databases?hl=en)
 
-VPN:
-[Google Cloud と AWS 間の HA VPN 接続を作成する](https://docs.cloud.google.com/network-connectivity/docs/vpn/tutorials/create-ha-vpn-connections-google-cloud-aws?hl=ja)
+VPN
 
-[Example site to site VPN between Google Cloud Platform (GCP) and Amazon Web Services (AWS)
+  - [Google Cloud と AWS 間の HA VPN 接続を作成する](https://docs.cloud.google.com/network-connectivity/docs/vpn/tutorials/create-ha-vpn-connections-google-cloud-aws?hl=ja)
+  - [Example site to site VPN between Google Cloud Platform (GCP) and Amazon Web Services (AWS)
 ](https://gist.github.com/mikesparr/2580819fdbe96b108335e7080f5c8832)
-
-[Terraform examples for HA VPN gateways](https://docs.cloud.google.com/network-connectivity/docs/vpn/how-to/automate-vpn-setup-with-terraform#to_an_external_peer_network)
-
-[AWSとGCPのVPN接続をTerraformでまとめる
+  - [Terraform examples for HA VPN gateways](https://docs.cloud.google.com/network-connectivity/docs/vpn/how-to/automate-vpn-setup-with-terraform#to_an_external_peer_network)
+  - [AWSとGCPのVPN接続をTerraformでまとめる
 ](https://dev.classmethod.jp/articles/aws_gcp_vpn_terraform/)
+
+データ分析AIエージェント:
+- メルカリSocrates:
+
+  - [構想1ヶ月でローンチ。メルカリの新分析ツール「Socrates」が高速で開発できた理由](https://careers.mercari.com/mercan/articles/53431/)
+  - [メルカリにおけるデータアナリティクス AI エージェント「Socrates」と ADK 活用事例](https://speakerdeck.com/na0/merukariniokerudetaanariteikusu-ai-eziento-socrates-to-adk-huo-yong-shi-li)
+  - [データエージェントのためのナレッジカタログ](https://speakerdeck.com/na0/detaezientonotamenonaretuzikatarogu)
+  - [メルカリのデータ分析 AI エージェント「 Socrates」 精度改善と組織浸透の実践知](https://services.google.com/fh/files/events/gcdais-26s-t1-session1.pdf)
+
+- ダイニー ask anything
+
+  - [Claude Managed Agentsで「まずエンジニアに聞こう」を「まずbotに聞こう」に変えた](https://zenn.dev/dinii/articles/d7be3acc43d868)
+
+
