@@ -1,6 +1,6 @@
 ---
 title: "2026年のpaizaのデータ基盤・データ分析とデータ分析AIエージェント活用"
-emoji: "🐷"
+emoji: "📊"
 type: "tech" # tech: 技術記事 / idea: アイデア
 topics: ["bigquery", "redash"]
 published: true
