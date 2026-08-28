@@ -3,7 +3,7 @@ title: "2026年のpaizaのデータ基盤・データ分析とデータ分析AI�
 emoji: "🐷"
 type: "tech" # tech: 技術記事 / idea: アイデア
 topics: ["bigquery", "redash"]
-published: false
+published: true
 ---
 
 # はじめに
