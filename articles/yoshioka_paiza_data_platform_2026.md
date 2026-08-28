@@ -104,7 +104,8 @@ https://note.com/rk611/n/n694376daff74
 
 Webサービス・データベース(RDB / MySQL, Aurora)が動いているAWSと、BigQueryがあるGCP間でVPN接続を行いました。DataStream / Cloud Storage / Pub/Sub / Dataflow を用いたデータ基盤を構築しました。DataStreamがCDP(Change Data Capture, 変更データキャプチャ)でMySQLのbinlog(バイナリログ)からデータ変更を取得して履歴データとして保存し、そこから日次同期でデータ基盤上のレプリカの更新を行うようにしました。特定の個人情報のマスクや、タイムスタンプの調整はDataflowのUDFでマスクを行っています。
 
-![](https://static.zenn.studio/user-upload/f6a2febd9e7f-20260814.png)
+![](https://static.zenn.studio/user-upload/c62e36bed719-20260828.png)
+
 https://cloud.google.com/blog/ja/products/databases/new-cloud-based-cdc-replication-across-databases
 
 
